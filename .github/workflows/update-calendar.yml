@@ -1,0 +1,39 @@
+name: Update WM 2026 calendar
+
+on:
+  schedule:
+    - cron: "15 7,21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-calendar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Update ICS calendar
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+        run: |
+          python update_wc_calendar.py \
+            --provider football-data \
+            --input FIFA_WM_2026_Alle_Spiele.ics \
+            --output FIFA_WM_2026_Alle_Spiele_updated.ics
+
+      - name: Commit updated ICS if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add FIFA_WM_2026_Alle_Spiele_updated.ics
+          git diff --cached --quiet || git commit -m "Update WM 2026 calendar"
+          git push
