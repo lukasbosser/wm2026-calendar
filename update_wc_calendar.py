@@ -114,6 +114,81 @@ STAGE_DE = {
     "Final": "Finale",
 }
 
+FOOTBALL_DATA_STAGE_DE = {
+    "GROUP_STAGE": "Gruppenphase",
+    "LAST_32": "Sechzehntelfinale",
+    "LAST_16": "Achtelfinale",
+    "QUARTER_FINALS": "Viertelfinale",
+    "SEMI_FINALS": "Halbfinale",
+    "THIRD_PLACE": "Spiel um Platz 3",
+    "FINAL": "Finale",
+}
+
+TEAM_DE = {
+    "Algeria": "Algerien",
+    "Argentina": "Argentinien",
+    "Australia": "Australien",
+    "Austria": "Österreich",
+    "Belgium": "Belgien",
+    "Brazil": "Brasilien",
+    "Cameroon": "Kamerun",
+    "Canada": "Kanada",
+    "Chile": "Chile",
+    "China PR": "China",
+    "Colombia": "Kolumbien",
+    "Costa Rica": "Costa Rica",
+    "Croatia": "Kroatien",
+    "Czechia": "Tschechien",
+    "Czech Republic": "Tschechien",
+    "Denmark": "Dänemark",
+    "Ecuador": "Ecuador",
+    "Egypt": "Ägypten",
+    "England": "England",
+    "France": "Frankreich",
+    "Germany": "Deutschland",
+    "Ghana": "Ghana",
+    "Greece": "Griechenland",
+    "Iran": "Iran",
+    "Italy": "Italien",
+    "Ivory Coast": "Elfenbeinküste",
+    "Côte d’Ivoire": "Elfenbeinküste",
+    "Côte d'Ivoire": "Elfenbeinküste",
+    "Japan": "Japan",
+    "Korea Republic": "Südkorea",
+    "South Korea": "Südkorea",
+    "Mexico": "Mexiko",
+    "Morocco": "Marokko",
+    "Netherlands": "Niederlande",
+    "New Zealand": "Neuseeland",
+    "Nigeria": "Nigeria",
+    "Norway": "Norwegen",
+    "Paraguay": "Paraguay",
+    "Peru": "Peru",
+    "Poland": "Polen",
+    "Portugal": "Portugal",
+    "Qatar": "Katar",
+    "Romania": "Rumänien",
+    "Russia": "Russland",
+    "Saudi Arabia": "Saudi-Arabien",
+    "Scotland": "Schottland",
+    "Senegal": "Senegal",
+    "Serbia": "Serbien",
+    "Slovakia": "Slowakei",
+    "Slovenia": "Slowenien",
+    "South Africa": "Südafrika",
+    "Spain": "Spanien",
+    "Sweden": "Schweden",
+    "Switzerland": "Schweiz",
+    "Tunisia": "Tunesien",
+    "Türkiye": "Türkei",
+    "Turkey": "Türkei",
+    "Ukraine": "Ukraine",
+    "United States": "USA",
+    "USA": "USA",
+    "Uruguay": "Uruguay",
+    "Wales": "Wales",
+}
+
 # Optional: ergänzt Stadien, falls eine Datenquelle nur Städte liefert.
 # Kannst du erweitern/überschreiben, ohne die Logik anzufassen.
 GROUND_TO_STADIUM = {
@@ -183,6 +258,15 @@ def escape_ics(value: str) -> str:
     )
 
 
+def unescape_ics(value: str) -> str:
+    return (
+        value.replace("\\n", "\n")
+        .replace("\\,", ",")
+        .replace("\\;", ";")
+        .replace("\\\\", "\\")
+    )
+
+
 def parse_events(lines: List[str]) -> List[List[str]]:
     events = []
     current = None
@@ -216,11 +300,32 @@ def replace_property(event_lines: List[str], name: str, value: str) -> List[str]
     return out
 
 
+def read_property(event_lines: List[str], name: str) -> str:
+    prefix = name + ":"
+    param_prefix = name + ";"
+    for line in event_lines:
+        if line.startswith(prefix):
+            return unescape_ics(line[len(prefix):])
+        if line.startswith(param_prefix):
+            _, _, value = line.partition(":")
+            return unescape_ics(value)
+    return ""
+
+
 def round_de(round_name: str) -> str:
+    cleaned = str(round_name or "Spiel").strip()
+    if cleaned in FOOTBALL_DATA_STAGE_DE:
+        return FOOTBALL_DATA_STAGE_DE[cleaned]
+    cleaned_pretty = cleaned.replace("_", " ").title()
     for key, val in STAGE_DE.items():
-        if round_name.startswith(key):
+        if cleaned_pretty.startswith(key):
             return val
-    return round_name
+    return cleaned_pretty
+
+
+def team_de(team_name: str) -> str:
+    cleaned = str(team_name or "TBD").strip()
+    return TEAM_DE.get(cleaned, cleaned)
 
 
 def normalize_team(name: Any) -> str:
@@ -235,7 +340,7 @@ def normalize_team(name: Any) -> str:
     m = re.fullmatch(r"L(\d+)", name)
     if m:
         return f"Verlierer Spiel {m.group(1)}"
-    return name
+    return team_de(name)
 
 
 def is_known_pairing(team1: str, team2: str) -> bool:
@@ -268,8 +373,17 @@ def extract_score(match: Dict[str, Any]) -> tuple[int, int] | None:
                 pair = _score_pair_from_value(value.get(nested_key))
                 if pair is not None:
                     return int(pair[0]), int(pair[1])
-            home = value.get("home") or value.get("team1") or value.get("h")
-            away = value.get("away") or value.get("team2") or value.get("a")
+            home = value.get("home")
+            if home is None:
+                home = value.get("team1")
+            if home is None:
+                home = value.get("h")
+
+            away = value.get("away")
+            if away is None:
+                away = value.get("team2")
+            if away is None:
+                away = value.get("a")
             if home is not None and away is not None:
                 return int(home), int(away)
 
@@ -409,47 +523,54 @@ def extract_goals(match: Dict[str, Any], team1: str, team2: str) -> List[str]:
     return deduped
 
 
-def event_values(match_number: int, match: Dict[str, Any]) -> Dict[str, str]:
+def event_values(match_number: int, match: Dict[str, Any], fallback_location: str = "") -> Dict[str, str]:
     team1_raw = match.get("team1") or match.get("home_team") or match.get("home") or "TBD"
     team2_raw = match.get("team2") or match.get("away_team") or match.get("away") or "TBD"
     team1 = normalize_team(team1_raw)
     team2 = normalize_team(team2_raw)
     stage = round_de(str(match.get("round") or match.get("stage") or "Spiel"))
-    location = str(match.get("venue") or match.get("stadium") or match.get("ground") or "").strip()
-    location = GROUND_TO_STADIUM.get(location, location)
+    api_location = str(match.get("venue") or match.get("stadium") or match.get("ground") or "").strip()
+    location = GROUND_TO_STADIUM.get(api_location, api_location)
+    if not location:
+        location = fallback_location
 
     score = extract_score(match)
     finished = is_match_finished(match, score)
     known_pairing = is_known_pairing(str(team1_raw), str(team2_raw))
 
     if finished and score is not None:
-        summary = f"{team1} {score[0]}:{score[1]} {team2}"
+        summary = f"WM26: {team1} {score[0]}:{score[1]} {team2}"
     elif known_pairing:
-        summary = f"{team1} vs {team2}"
+        summary = f"WM26: {team1} - {team2}"
     else:
-        summary = f"{stage}: {team1} vs {team2}"
+        summary = f"WM26: {stage}: {team1} - {team2}"
 
-    desc_parts = [
-        f"FIFA WM 2026, Spiel {match_number}.",
-        f"Runde: {stage}.",
-        f"Paarung aus Datenquelle: {team1} vs {team2}.",
+    updated_at = datetime.now(timezone.utc).strftime("%d.%m.%Y, %H:%M UTC")
+    desc_lines = [
+        f"🏆 FIFA WM 2026 · Spiel {match_number}",
+        "",
+        f"Runde: {stage}",
+        f"Begegnung: {team1} - {team2}",
     ]
 
     if finished and score is not None:
-        desc_parts.append(f"Endstand: {team1} {score[0]}:{score[1]} {team2}.")
+        desc_lines.append(f"Endstand: {team1} {score[0]}:{score[1]} {team2}")
         goals = extract_goals(match, team1, team2)
+        desc_lines.append("")
         if goals:
-            desc_parts.append("Torschützen:\n" + "\n".join(f"- {goal}" for goal in goals))
+            desc_lines.append("⚽ Torschützen:")
+            desc_lines.extend(f"• {goal}" for goal in goals)
         else:
-            desc_parts.append("Torschützen: In der Datenquelle nicht vorhanden.")
+            desc_lines.append("⚽ Torschützen: In der Datenquelle nicht vorhanden")
     elif score is not None:
-        desc_parts.append(f"Aktueller/übernommener Spielstand: {team1} {score[0]}:{score[1]} {team2}.")
+        desc_lines.append(f"Spielstand: {team1} {score[0]}:{score[1]} {team2}")
 
-    desc_parts.extend([
-        f"Ort: {location}.",
-        f"Automatisch aktualisiert: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.",
+    desc_lines.extend([
+        "",
+        f"📍 Ort: {location or 'Noch nicht verfügbar'}",
+        f"🔄 Aktualisiert: {updated_at}",
     ])
-    desc = " ".join(desc_parts)
+    desc = "\n".join(desc_lines)
     return {"SUMMARY": summary, "LOCATION": location, "DESCRIPTION": desc}
 
 
@@ -462,7 +583,8 @@ def update_ics(input_path: Path, output_path: Path, matches: List[Dict[str, Any]
     updated_events: List[List[str]] = []
     for idx, event in enumerate(events):
         if idx < len(matches):
-            values = event_values(idx + 1, matches[idx])
+            existing_location = read_property(event, "LOCATION")
+            values = event_values(idx + 1, matches[idx], fallback_location=existing_location)
             event = replace_property(event, "SUMMARY", values["SUMMARY"])
             event = replace_property(event, "LOCATION", values["LOCATION"])
             event = replace_property(event, "DESCRIPTION", values["DESCRIPTION"])
